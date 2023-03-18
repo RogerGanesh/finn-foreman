@@ -1,4 +1,4 @@
-module github.com/see-air-uh/finn-mrkrabs
+module github.com/RogerGanesh/finn-foreman
 
 go 1.18
 

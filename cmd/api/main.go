@@ -2,14 +2,13 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
-	"../data"
-
+	"github.com/RogerGanesh/finn-foreman/data"
 	_ "github.com/jackc/pgconn"
 	_ "github.com/jackc/pgx/v4"
 	_ "github.com/jackc/pgx/v4/stdlib"
@@ -23,6 +22,15 @@ type Config struct {
 const (
 	webPort = "9002"
 )
+
+type RecurringPayment struct {
+	PaymentID          int     `json:"-"`
+	UserName           string  `json:"username"`
+	PaymentAmount      float32 `json:"amount"`
+	PaymentName        string  `json:"paymentName"`
+	PaymentDescription string  `json:"paymentDescription"`
+	PaymentDate        string  `json:"paymentDate"`
+}
 
 var counts int64
 
@@ -39,16 +47,65 @@ func main() {
 		Models: data.New(conn),
 	}
 
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", webPort),
-		Handler: app.routes(),
+	ticker := time.NewTicker(5 * time.Second)
+	for t := range ticker.C {
+		app.checkRecurringPayments(t)
 	}
 
-	err := srv.ListenAndServe()
+	// srv := &http.Server{
+	// 	Addr:    fmt.Sprintf(":%s", webPort),
+	// 	Handler: app.routes(),
+	// }
+
+	// err := srv.ListenAndServe()
+
+	// if err != nil {
+	// 	log.Panic(err)
+	// }
+}
+
+func (app *Config) checkRecurringPayments(t time.Time) error {
+	recurring, err := app.Models.RecurringPayment.GetAllReccurringPayments()
+
+	for _, reccurance := range recurring {
+		jsonbody, err := json.Marshal(reccurance)
+		if err != nil {
+			// do error check
+			fmt.Println(err)
+			return err
+		}
+		recurr := RecurringPayment{}
+		if err := json.Unmarshal(jsonbody, &recurr); err != nil {
+			// do error check
+			fmt.Println(err)
+			return err
+		}
+
+		var username = recurr.UserName
+		recurrance_date, _ := time.Parse(time.RFC3339, recurr.PaymentDate)
+		currentTime := time.Now()
+
+		if recurrance_date.Truncate(24 * time.Hour).Equal(currentTime.Truncate(24 * time.Hour)) {
+			balance, err := app.Models.RecurringPayment.GetUserBalance(username)
+
+			res, err := app.Models.RecurringPayment.UpdateBalance(username, -recurr.PaymentAmount, recurr.PaymentName, recurr.PaymentDescription)
+			if err != nil {
+				// do error check
+				fmt.Println(err)
+				app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, false)
+				return err
+			}
+
+			app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, true)
+			log.Println(balance, res)
+		}
+	}
 
 	if err != nil {
 		log.Panic(err)
+		return err
 	}
+	return nil
 }
 
 func connectToDB() *sql.DB {

@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	// "errors"
 
@@ -43,6 +44,74 @@ type PaymentHistory struct {
 	PaymentHistoryStatus bool   `json:"paymentHistoryStatus"`
 }
 
+func (t *RecurringPayment) GetUserBalance(username string) (float32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	query := `select SUM(TransactionAmount) From mrkrabs.Transactions
+	where Username = $1
+	group by Username`
+
+	var totalBalance float32
+
+	row := db.QueryRowContext(ctx, query, username)
+	err := row.Scan(&totalBalance)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return totalBalance, nil
+}
+
+func (t *RecurringPayment) UpdateBalance(username string, transactionAmount float32, transactionName string, transactionDescription string) (float32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	query := `insert into mrkrabs.Transactions (Username, TransactionAmount, TransactionName, TransactionDescription) values
+	($1,$2,$3,$4)`
+
+	balance, err := t.GetUserBalance(username)
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		return 0, err
+	}
+	if (balance + transactionAmount) < 0 {
+		return 0, errors.New("error. can not decrement balance below zero")
+	}
+
+	_, err = db.ExecContext(ctx, query, username, transactionAmount, transactionName, transactionDescription)
+	if err != nil {
+		return 0, err
+	}
+
+	return balance + transactionAmount, nil
+}
+
+func (t *RecurringPayment) GetAllReccurringPayments() ([]RecurringPayment, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	query := `SELECT paymentid, username, paymentamount, paymentname, paymentdescription, paymentdate
+	FROM foreman.recurring_payment`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var recurring_payments []RecurringPayment
+
+	for rows.Next() {
+		var recurring RecurringPayment
+		if err := rows.Scan(&recurring.PaymentID, &recurring.UserName, &recurring.PaymentAmount, &recurring.PaymentName, &recurring.PaymentDescription, &recurring.PaymentDate); err != nil {
+			return recurring_payments, err
+		}
+		recurring_payments = append(recurring_payments, recurring)
+	}
+	if err = rows.Err(); err != nil {
+		return recurring_payments, err
+	}
+	return recurring_payments, nil
+}
+
 func (t *RecurringPayment) GetReccurringPayments(username string) ([]RecurringPayment, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -78,6 +147,24 @@ func (t *RecurringPayment) AddReccurringPayment(username string, paymentAmount f
 		VALUES ($1, $2, $3, $4, $5);`
 
 	_, err := db.ExecContext(ctx, query, username, paymentAmount, paymentName, paymentDescription, paymentDate)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return 1, err
+}
+
+func (*PaymentHistory) InsertPaymentHistory(paymentID int, PaymentHistoryStatus bool) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	query := `INSERT INTO foreman.payment_history(
+		paymentid, paymenthistorydate, paymenthistorystatus)
+		VALUES ($1, $2, $3);`
+
+	currentTime := time.Now()
+
+	_, err := db.ExecContext(ctx, query, paymentID, currentTime.UTC(), PaymentHistoryStatus)
 
 	if err != nil {
 		return 0, err
