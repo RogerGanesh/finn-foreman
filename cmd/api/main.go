@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/RogerGanesh/finn-foreman/data"
@@ -24,12 +25,14 @@ const (
 )
 
 type RecurringPayment struct {
-	PaymentID          int     `json:"-"`
+	PaymentID          int     `json:"paymentID"`
 	UserName           string  `json:"username"`
+	AccountName        string  `json:"accountname"`
 	PaymentAmount      float32 `json:"amount"`
 	PaymentName        string  `json:"paymentName"`
 	PaymentDescription string  `json:"paymentDescription"`
 	PaymentDate        string  `json:"paymentDate"`
+	PaymentType        string  `json:"paymentType"`
 }
 
 var counts int64
@@ -46,6 +49,8 @@ func main() {
 		DB:     conn,
 		Models: data.New(conn),
 	}
+
+	fmt.Println("Starting ticker...")
 
 	ticker := time.NewTicker(5 * time.Second)
 	for t := range ticker.C {
@@ -81,14 +86,12 @@ func (app *Config) checkRecurringPayments(t time.Time) error {
 			return err
 		}
 
+		fmt.Println(strconv.Itoa(recurr.PaymentID) + " => " + recurr.PaymentType + " => " + recurr.AccountName)
+
 		var username = recurr.UserName
-		recurrance_date, _ := time.Parse(time.RFC3339, recurr.PaymentDate)
-		currentTime := time.Now()
 
-		if recurrance_date.Truncate(24 * time.Hour).Equal(currentTime.Truncate(24 * time.Hour)) {
-			balance, err := app.Models.RecurringPayment.GetUserBalance(username)
-
-			res, err := app.Models.RecurringPayment.UpdateBalance(username, -recurr.PaymentAmount, recurr.PaymentName, recurr.PaymentDescription)
+		if recurr.PaymentType == "expense" {
+			res, err := app.Models.RecurringPayment.UpdateBalance(username, recurr.AccountName, -recurr.PaymentAmount, recurr.PaymentName, recurr.PaymentDescription, "Expense")
 			if err != nil {
 				// do error check
 				fmt.Println(err)
@@ -97,6 +100,19 @@ func (app *Config) checkRecurringPayments(t time.Time) error {
 			}
 
 			app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, true)
+			balance, err := app.Models.RecurringPayment.GetUserBalance(username, recurr.AccountName)
+			log.Println(balance, res)
+		} else {
+			res, err := app.Models.RecurringPayment.UpdateBalance(username, recurr.AccountName, recurr.PaymentAmount, recurr.PaymentName, recurr.PaymentDescription, "Income")
+			if err != nil {
+				// do error check
+				fmt.Println(err)
+				app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, false)
+				return err
+			}
+
+			app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, true)
+			balance, err := app.Models.RecurringPayment.GetUserBalance(username, recurr.AccountName)
 			log.Println(balance, res)
 		}
 	}

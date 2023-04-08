@@ -29,12 +29,14 @@ type Models struct {
 }
 
 type RecurringPayment struct {
-	PaymentID          int     `json:"-"`
+	PaymentID          int     `json:"paymentID"`
 	UserName           string  `json:"username"`
+	AccountName        string  `json:"accountname"`
 	PaymentAmount      float32 `json:"amount"`
 	PaymentName        string  `json:"paymentName"`
 	PaymentDescription string  `json:"paymentDescription"`
 	PaymentDate        string  `json:"paymentDate"`
+	PaymentType        string  `json:"paymentType"`
 }
 
 type PaymentHistory struct {
@@ -44,16 +46,16 @@ type PaymentHistory struct {
 	PaymentHistoryStatus bool   `json:"paymentHistoryStatus"`
 }
 
-func (t *RecurringPayment) GetUserBalance(username string) (float32, error) {
+func (t *RecurringPayment) GetUserBalance(email string, account string) (float32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 	query := `select SUM(TransactionAmount) From mrkrabs.Transactions
-	where Username = $1
+	where Username = $1 and accountname = $2
 	group by Username`
 
 	var totalBalance float32
 
-	row := db.QueryRowContext(ctx, query, username)
+	row := db.QueryRowContext(ctx, query, email, account)
 	err := row.Scan(&totalBalance)
 
 	if err != nil {
@@ -63,13 +65,13 @@ func (t *RecurringPayment) GetUserBalance(username string) (float32, error) {
 	return totalBalance, nil
 }
 
-func (t *RecurringPayment) UpdateBalance(username string, transactionAmount float32, transactionName string, transactionDescription string) (float32, error) {
+func (t *RecurringPayment) UpdateBalance(username string, account string, transactionAmount float32, transactionName string, transactionDescription string, transactionCategory string) (float32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	query := `insert into mrkrabs.Transactions (Username, TransactionAmount, TransactionName, TransactionDescription) values
-	($1,$2,$3,$4)`
+	query := `insert into mrkrabs.Transactions (Username, AccountName, TransactionAmount, TransactionName, TransactionDescription, Category) values
+	($1,$2,$3,$4,$5,$6)`
 
-	balance, err := t.GetUserBalance(username)
+	balance, err := t.GetUserBalance(username, account)
 	if err != nil && err.Error() != "sql: no rows in result set" {
 		return 0, err
 	}
@@ -77,7 +79,7 @@ func (t *RecurringPayment) UpdateBalance(username string, transactionAmount floa
 		return 0, errors.New("error. can not decrement balance below zero")
 	}
 
-	_, err = db.ExecContext(ctx, query, username, transactionAmount, transactionName, transactionDescription)
+	_, err = db.ExecContext(ctx, query, username, account, transactionAmount, transactionName, transactionDescription, transactionCategory)
 	if err != nil {
 		return 0, err
 	}
@@ -88,8 +90,11 @@ func (t *RecurringPayment) UpdateBalance(username string, transactionAmount floa
 func (t *RecurringPayment) GetAllReccurringPayments() ([]RecurringPayment, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	query := `SELECT paymentid, username, paymentamount, paymentname, paymentdescription, paymentdate
-	FROM foreman.recurring_payment`
+	query := `SELECT paymentid, username, accountname, paymentamount, paymentname, paymentdescription, paymentdate, paymenttype
+	FROM foreman.recurring_payment rp
+	WHERE rp.paymentid NOT IN 
+	(SELECT paymentid FROM foreman.payment_history WHERE paymenthistorydate::date = CURRENT_DATE::date OR paymenthistorystatus != true)
+	AND EXTRACT(day from paymentdate) = EXTRACT(day from CURRENT_DATE)`
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -101,7 +106,7 @@ func (t *RecurringPayment) GetAllReccurringPayments() ([]RecurringPayment, error
 
 	for rows.Next() {
 		var recurring RecurringPayment
-		if err := rows.Scan(&recurring.PaymentID, &recurring.UserName, &recurring.PaymentAmount, &recurring.PaymentName, &recurring.PaymentDescription, &recurring.PaymentDate); err != nil {
+		if err := rows.Scan(&recurring.PaymentID, &recurring.UserName, &recurring.AccountName, &recurring.PaymentAmount, &recurring.PaymentName, &recurring.PaymentDescription, &recurring.PaymentDate, &recurring.PaymentType); err != nil {
 			return recurring_payments, err
 		}
 		recurring_payments = append(recurring_payments, recurring)
