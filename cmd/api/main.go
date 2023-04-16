@@ -33,6 +33,8 @@ type RecurringPayment struct {
 	PaymentDescription string  `json:"paymentDescription"`
 	PaymentDate        string  `json:"paymentDate"`
 	PaymentType        string  `json:"paymentType"`
+	PaymentFrequency   string  `json:"paymentFrequency"`
+	NextPaymentDate    string  `json:"nextPaymentDate"`
 }
 
 var counts int64
@@ -88,6 +90,21 @@ func (app *Config) checkRecurringPayments(t time.Time) error {
 
 		fmt.Println(strconv.Itoa(recurr.PaymentID) + " => " + recurr.PaymentType + " => " + recurr.AccountName)
 
+		tt, err := time.Parse(time.RFC3339, recurr.NextPaymentDate)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		next_payment := ""
+
+		if recurr.PaymentFrequency == "daily" {
+			next_payment = tt.AddDate(0, 0, 1).Format("2006-01-02")
+		} else if recurr.PaymentFrequency == "bi-weekly" {
+			next_payment = tt.AddDate(0, 0, 14).Format("2006-01-02")
+		} else if recurr.PaymentFrequency == "monthly" {
+			next_payment = tt.AddDate(0, 1, 0).Format("2006-01-02")
+		}
+
 		var username = recurr.UserName
 
 		if recurr.PaymentType == "expense" {
@@ -100,6 +117,7 @@ func (app *Config) checkRecurringPayments(t time.Time) error {
 			}
 
 			app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, true)
+			app.Models.RecurringPayment.UpdateReccurringPayment(recurr.PaymentID, next_payment)
 			balance, err := app.Models.RecurringPayment.GetUserBalance(username, recurr.AccountName)
 			log.Println(balance, res)
 		} else {
@@ -112,6 +130,7 @@ func (app *Config) checkRecurringPayments(t time.Time) error {
 			}
 
 			app.Models.PaymentHistory.InsertPaymentHistory(recurr.PaymentID, true)
+			app.Models.RecurringPayment.UpdateReccurringPayment(recurr.PaymentID, next_payment)
 			balance, err := app.Models.RecurringPayment.GetUserBalance(username, recurr.AccountName)
 			log.Println(balance, res)
 		}

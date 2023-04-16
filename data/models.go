@@ -37,6 +37,8 @@ type RecurringPayment struct {
 	PaymentDescription string  `json:"paymentDescription"`
 	PaymentDate        string  `json:"paymentDate"`
 	PaymentType        string  `json:"paymentType"`
+	PaymentFrequency   string  `json:"paymentFrequency"`
+	NextPaymentDate    string  `json:"nextPaymentDate"`
 }
 
 type PaymentHistory struct {
@@ -90,11 +92,11 @@ func (t *RecurringPayment) UpdateBalance(username string, account string, transa
 func (t *RecurringPayment) GetAllReccurringPayments() ([]RecurringPayment, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	query := `SELECT paymentid, username, accountname, paymentamount, paymentname, paymentdescription, paymentdate, paymenttype
+	query := `SELECT paymentid, username, accountname, paymentamount, paymentname, paymentdescription, paymentdate, paymenttype, paymentfrequency, nextpaymentdate
 	FROM foreman.recurring_payment rp
 	WHERE rp.paymentid NOT IN 
 	(SELECT paymentid FROM foreman.payment_history WHERE paymenthistorydate::date = CURRENT_DATE::date OR paymenthistorystatus != true)
-	AND EXTRACT(day from paymentdate) = EXTRACT(day from CURRENT_DATE)`
+	AND EXTRACT(day from nextpaymentdate) = EXTRACT(day from CURRENT_DATE)`
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -106,7 +108,7 @@ func (t *RecurringPayment) GetAllReccurringPayments() ([]RecurringPayment, error
 
 	for rows.Next() {
 		var recurring RecurringPayment
-		if err := rows.Scan(&recurring.PaymentID, &recurring.UserName, &recurring.AccountName, &recurring.PaymentAmount, &recurring.PaymentName, &recurring.PaymentDescription, &recurring.PaymentDate, &recurring.PaymentType); err != nil {
+		if err := rows.Scan(&recurring.PaymentID, &recurring.UserName, &recurring.AccountName, &recurring.PaymentAmount, &recurring.PaymentName, &recurring.PaymentDescription, &recurring.PaymentDate, &recurring.PaymentType, &recurring.PaymentFrequency, &recurring.NextPaymentDate); err != nil {
 			return recurring_payments, err
 		}
 		recurring_payments = append(recurring_payments, recurring)
@@ -152,6 +154,21 @@ func (t *RecurringPayment) AddReccurringPayment(username string, paymentAmount f
 		VALUES ($1, $2, $3, $4, $5);`
 
 	_, err := db.ExecContext(ctx, query, username, paymentAmount, paymentName, paymentDescription, paymentDate)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return 1, err
+}
+
+func (t *RecurringPayment) UpdateReccurringPayment(paymentID int, nextPayment string) (float32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	query := `UPDATE foreman.recurring_payment
+	SET nextpaymentdate = $1 where paymentid = 2`
+
+	_, err := db.ExecContext(ctx, query, nextPayment, paymentID)
 
 	if err != nil {
 		return 0, err
